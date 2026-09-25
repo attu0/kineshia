@@ -44,6 +44,7 @@ from planar_arm_control.planar_arm import PlanarArm
 ##################### TASK CONSTANTS #######################
 
 LINK_LENGTHS = [3.0, 2.0, 1.5]
+INITIAL_JOINTS = [math.pi / 2.0, 0.0, 0.0]
 
 
 ##################### CLASS DEFINITION #######################
@@ -86,12 +87,14 @@ class ControllerNode(Node):
         self.control_mode = control_mode
 
         ##################### ARM STATE #######################
-        self.current_q = [0.0, 0.0, 0.0]   # commanded (planner) state
+        # Start in an upright configuration:
+        # q1 = 90 deg, q2 = 0 deg, q3 = 0 deg.
+        self.current_q = list(INITIAL_JOINTS)   # commanded (planner) state
         self.current_qdot = [0.0, 0.0, 0.0]  # commanded joint velocities (rad/s)
-        self.measured_q = [0.0, 0.0, 0.0]  # reported (plant) state -- see simulate_plant()
+        self.measured_q = list(INITIAL_JOINTS)  # reported (plant) state
         self.measured_qdot = [0.0, 0.0, 0.0]
-        self.start_q = [0.0, 0.0, 0.0]
-        self.target_q = [0.0, 0.0, 0.0]
+        self.start_q = list(INITIAL_JOINTS)
+        self.target_q = list(INITIAL_JOINTS)
 
         ##################### TRAJECTORY STATE #######################
         self.is_moving = False

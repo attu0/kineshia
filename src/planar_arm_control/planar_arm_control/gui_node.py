@@ -54,6 +54,7 @@ except ImportError:
 ##################### TASK CONSTANTS #######################
 
 LINK_LENGTHS = [3.0, 2.0, 1.5]
+INITIAL_JOINTS = [math.pi / 2.0, 0.0, 0.0]
 
 
 ##################### CLASS DEFINITION #######################
@@ -85,7 +86,7 @@ class GuiNode(Node):
         )
 
         # State Data for GUI
-        self.current_q = [0.0, 0.0, 0.0]
+        self.current_q = list(INITIAL_JOINTS)
         self.current_ee = (0.0, 0.0)
         self.last_status = "No target sent yet."
         self.last_status_is_warning = False
