@@ -1,74 +1,152 @@
 # planar_arm_control
 
-ROS 2 (Jazzy/Humble) control + PyQt5/PyQtGraph telemetry GUI for a 3-DoF
-planar manipulator. Take-home submission for Kineshia Robotics.
+ROS 2 (Jazzy) control + PyQt5/PyQtGraph telemetry GUI for a 3-DoF planar manipulator.
 
-## Build
+Take-home submission for Kineshia Robotics.
+
+## 🛠️ Initial Setup
+
+Clone the repository:
 
 ```bash
-# from your workspace root, e.g. ~/ros2_ws
-cp -r planar_arm_control src/
-pip install PyQt5 pyqtgraph --user   # not available via rosdep on all distros
-colcon build --packages-select planar_arm_control
+git clone https://github.com/attu0/kineshia.git
+cd ~/kineshia
+```
+
+### 1. Install Required Packages and Libraries
+
+The repository includes setup scripts under `src/planar_arm_control/scripts/`.
+
+```bash
+cd ~/kineshia/src/planar_arm_control/scripts
+
+chmod +x *
+
+./requirements.sh
+```
+
+The dependency script is configured for **Ubuntu 24.04 + ROS 2 Jazzy**.
+
+### 2. Build the Package
+
+From the workspace root:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+
+cd ~/kineshia
+colcon build --symlink-install
+
 source install/setup.bash
 ```
 
-## Run
+---
+
+## 🚀 How to Run
+
+The package includes `launch.sh` for easier startup.
 
 ```bash
-ros2 launch planar_arm_control bringup.launch.py
+cd ~/kineshia/src/planar_arm_control/scripts
 ```
 
-This brings up `controller_node` and `gui_node` together. Launch arguments:
+### Recommended
 
-- `publish_rate_hz` (default `50.0`) — rate of `/joint_states`.
-- `control_mode` (default `position`) — reserved for future control modes
-  (see "What I'd do next").
+```bash
+./launch.sh
+```
 
-From the GUI: enter a target X/Y and click **Send Target**, or click
-**Run Test Sequence** to run the fixed pick-and-place scenario below.
+This starts the system in **velocity mode**.
 
-## Test scenario (as specified in the brief)
+### Position Mode
 
-- Pick at `(4.0, 2.0)`, place at `(-3.0, 3.0)` — run via the **Run Test
-  Sequence** button.
-- Edge case: `(7.0, 3.0)` is outside the workspace (max reach = 6.5). Type
-  it into the Target X/Y fields and click **Send Target** — the status bar
-  at the bottom of the GUI turns red and reports the requested target
-  alongside the clamped point actually used.
+```bash
+./launch.sh position
+```
 
-## What I built
+### Velocity Mode
 
-- **`controller_node`** — owns arm state, subscribes to `/target_pose`,
-  runs the provided `PlanarArm.inverse_kinematics`, and streams a quintic
-  (zero velocity/acceleration at both ends) joint-space trajectory on
-  `/joint_states` at a fixed rate.
-- **`gui_node`** — PyQt5/PyQtGraph client: live arm visualization, joint
-  angle vs. time plot, EE telemetry, target input, and the pick-and-place
-  sequence button. Runs `rclpy.spin_once(timeout_sec=0.0)` from a `QTimer`
-  so the Qt event loop and the ROS 2 side share one thread without either
-  blocking the other.
-- **`/target_status`** (`std_msgs/String`) and **`/at_goal`**
-  (`std_msgs/Bool`) — added on top of the suggested interface so the
-  controller can tell the GUI *why* the arm is doing something (target
-  reachable / clamped / rejected) and *when* a move has actually finished,
-  rather than the GUI guessing off a timer.
-- **`/joint_command`** vs **`/joint_states`** — kept as separate topics on
-  purpose. See the design note for why.
+```bash
+./launch.sh velocity
+```
 
-## Known limitations / what I'd do next with more time
+You can also launch directly using ROS 2:
 
-- Only position/trajectory control is implemented; `control_mode` is
-  declared but not yet branched on. Next: a velocity mode and a PID
-  tracking loop with a live error plot (see design note, stretch goals).
-- The Jacobian IK fallback (`jacobian_ik` in the provided library) doesn't
-  itself check joint limits or the ground constraint. I added a check in
-  `controller_node` that rejects any solution — analytical or
-  fallback — that fails those constraints, and reports it on
-  `/target_status`, rather than modifying `planar_arm.py`.
-- No automated tests yet (`launch_testing` / `pytest`) — would add
-  coverage for the reachability-clamp status logic and the
-  constraint-rejection path first, since those are the two behaviors this
-  submission adds beyond the stub.
-- Single fixed test scenario is hardcoded in the GUI's sequence button;
-  a real operator UI would let you queue arbitrary pick/place pairs.
+```bash
+ros2 launch planar_arm_control bringup.launch.py     control_mode:=velocity     max_joint_velocity:=1.5
+```
+
+### Launch Arguments
+
+- `publish_rate_hz` (default `50.0`) — Rate of `/joint_states` publication.
+- `control_mode` (default `position`) — Selects the trajectory planner:
+  - `position` — fixed-duration quintic blend
+  - `velocity` — physics-based trapezoidal profile
+- `max_joint_velocity` (default `1.5`) — Maximum velocity in rad/s for velocity mode.
+
+---
+
+## 🧪 What to Try
+
+This package implements the core requirements along with two stretch goals.
+
+### Test 1: Required Pick-and-Place
+
+**Goal:** Verify the arm can execute a multi-step sequence with gripper actions.
+
+1. Click the green **Run Test Sequence** button.
+2. The arm should:
+   - Move to `(4.0, 2.0)`
+   - Close the gripper
+   - Move to `(-3.0, 3.0)`
+   - Open the gripper
+3. Observe the PyQtGraph plots and gripper visualization.
+
+### Test 2: Out-of-Bounds Target
+
+**Goal:** Verify safe handling of unreachable targets.
+
+1. Enter:
+   - Target X: `7.0`
+   - Target Y: `3.0`
+2. Click **Send Target**.
+3. The controller should clamp the target to the reachable boundary `(5.97, 2.56)`.
+4. The GUI status bar should turn red and report that the target was clamped.
+
+### Test 3: Velocity Control Mode
+
+**Goal:** Verify the time-parameterized velocity profile.
+
+1. Launch using:
+
+```bash
+ros2 launch planar_arm_control bringup.launch.py     control_mode:=velocity     max_joint_velocity:=1.5
+```
+
+2. Send a nearby target, for example `(3.0, 2.0)`.
+3. Send a farther target, for example `(-3.0, 3.0)`.
+4. Check the terminal output. The travel time should change according to the motion distance and velocity/acceleration limits.
+
+### Test 4: Record & Playback
+
+**Goal:** Verify custom sequence recording and playback.
+
+1. Click **Start Recording**.
+2. Send a target, e.g. `(2.0, 4.0)`.
+3. Click **Close Gripper**.
+4. Send another target, e.g. `(-2.0, 4.0)`.
+5. Click **Open Gripper**.
+6. Click **Stop Recording**.
+7. Set **Loops** to `2`.
+8. Click **Play Sequence**.
+
+The recorded routine should execute twice and then stop automatically.
+
+---
+
+## 🏗️ Architecture Highlights
+
+- **`controller_node`** — Owns the arm state, receives `/target_pose`, runs IK, validates joint/ground constraints, and generates the trajectory.
+- **`gui_node`** — PyQt5/PyQtGraph interface for target control, visualization, telemetry, gripper control, and recording/playback.
+- **Feedback-driven sequencing** — `/target_status` and `/at_goal` provide controller feedback so playback advances when the target is actually reached.
+- **Sim-to-real seam** — `/joint_command` and `/joint_states` are kept separate. The current `simulate_plant()` mirrors the commanded state, allowing a real hardware driver to replace the simulated plant later.
