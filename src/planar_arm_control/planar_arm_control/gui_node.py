@@ -1,17 +1,34 @@
 #!/usr/bin/env python3
-"""
-gui_node.py
 
-A PyQt5 + PyQtGraph node that acts as a live client for a 3-DOF planar arm controller.
-Features:
-    - QTimer-based ROS 2 / Qt event loop integration (single-threaded, safe GUI updates).
-    - Live subscription to /joint_states.
-    - PyQtGraph plots for live arm visualization and joint angle telemetry over time.
-    - User input fields to publish target X/Y coordinates.
-    - Live end-effector (EE) telemetry.
-    - Record and Playback engine for custom waypoint sequences (with loop limits).
-"""
+'''
+*****************************************************************************************
+*
+*                    ===========================================
+*                       planar_arm_control
+*                    ===========================================
+*
+*  ROS 2 GUI node for the 3-DOF planar arm controller.
+*
+*****************************************************************************************
+'''
 
+# Author:           Atharv Mudse
+# Mail ID:          atharvmudse@gmail.com
+# Filename:         gui_node.py
+# Functions:        main, GuiNode callbacks, MainWindow GUI/control functions
+# Nodes:            gui_node
+#
+# Publishing Topics:
+#                   /target_pose
+#                   /gripper_state
+#
+# Subscribing Topics:
+#                   /joint_states
+#                   /target_status
+#                   /at_goal
+
+
+################### IMPORT MODULES #######################
 import sys
 import time
 import signal
@@ -34,14 +51,21 @@ except ImportError:
         def __init__(self, links):
             self.links = links
 
+##################### TASK CONSTANTS #######################
+
 LINK_LENGTHS = [3.0, 2.0, 1.5]
 
 
+##################### CLASS DEFINITION #######################
+
 class GuiNode(Node):
-    """ROS 2 Node handling communications."""
+    '''
+    Description: ROS 2 node handling communication between the GUI and
+                 the planar arm controller.
+    '''
 
     def __init__(self):
-        super().__init__("gui_node")
+        super().__init__('gui_node')
         self.arm = PlanarArm(LINK_LENGTHS)
 
         # ROS 2 Interfaces
@@ -75,6 +99,8 @@ class GuiNode(Node):
         self.q_data = [[], [], []]
 
         self.get_logger().info("[STARTUP] gui_node ready -- waiting for /joint_states...")
+
+    ##################### CALLBACK DEFINITIONS #######################
 
     def joint_callback(self, msg: JointState):
         if len(msg.position) >= 3:
@@ -131,7 +157,10 @@ class GuiNode(Node):
 
 
 class MainWindow(QtWidgets.QWidget):
-    """Main PyQt5 Window."""
+    '''
+    Description: Main PyQt5 window for arm control, visualization,
+                 telemetry, and sequence recording/playback.
+    '''
 
     def __init__(self, ros_node: GuiNode):
         super().__init__()
@@ -154,6 +183,8 @@ class MainWindow(QtWidgets.QWidget):
         self.spin_timer = QtCore.QTimer(self)
         self.spin_timer.timeout.connect(self.spin_and_update)
         self.spin_timer.start(30)
+
+    ##################### GUI DEFINITIONS #######################
 
     def init_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
@@ -294,7 +325,7 @@ class MainWindow(QtWidgets.QWidget):
         )
         self.telemetry_label.setText(telemetry_text)
 
-    # ---- RECORD & PLAYBACK SYSTEM ----
+    ##################### RECORD AND PLAYBACK #######################
 
     def toggle_record(self, checked):
         self.is_recording = checked
@@ -401,7 +432,7 @@ class MainWindow(QtWidgets.QWidget):
 
             QtCore.QTimer.singleShot(1000, self.advance_playback)
 
-    # ---- TEST SCENARIO ----
+    ##################### TEST SCENARIO #######################
 
     def run_pick_and_place(self):
         self.node.get_logger().info("[SEQUENCE] starting pick-and-place test scenario")
@@ -448,7 +479,14 @@ class MainWindow(QtWidgets.QWidget):
         advance()
 
 
+##################### FUNCTION DEFINITION #######################
+
 def main(args=None):
+    '''
+    Description: Initializes ROS 2 and the PyQt5 application, creates the
+                 GUI node and main window, and starts the event loop.
+    '''
+
     rclpy.init(args=args)
 
     app = QtWidgets.QApplication(sys.argv)

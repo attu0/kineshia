@@ -1,17 +1,34 @@
 #!/usr/bin/env python3
-"""
-controller_node.py
 
-A ROS 2 node that owns the arm state, accepts a target, plans a
-time-parameterized joint trajectory, and streams joint states as it executes.
+'''
+*****************************************************************************************
+*
+*                    ===========================================
+*                       planar_arm_control
+*                    ===========================================
+*
+*  ROS 2 controller node for the 3-DOF planar arm.
+*
+*****************************************************************************************
+'''
 
-Features:
-    - Publishes:   /joint_states (sensor_msgs/JointState) at a fixed rate.
-    - Subscribes:  /target_pose (geometry_msgs/Point).
-    - Trajectory:  Quintic polynomial for smooth zero-velocity/acceleration starts and stops.
-    - Uses the provided `PlanarArm` kinematics library.
-"""
+# Author:           Atharv Mudse
+# Mail ID:          atharvmudse@gmail.com
+# Filename:         controller_node.py
+# Functions:        main, target_callback, control_loop, trajectory helpers
+# Nodes:            controller_node
+#
+# Publishing Topics:
+#                   /joint_command
+#                   /joint_states
+#                   /target_status
+#                   /at_goal
+#
+# Subscribing Topics:
+#                   /target_pose
 
+
+################### IMPORT MODULES #######################
 import time
 import math
 import numpy as np
@@ -24,12 +41,22 @@ from std_msgs.msg import String, Bool
 # The provided kinematics library
 from planar_arm_control.planar_arm import PlanarArm
 
+##################### TASK CONSTANTS #######################
+
 LINK_LENGTHS = [3.0, 2.0, 1.5]
 
 
+##################### CLASS DEFINITION #######################
+
 class ControllerNode(Node):
+    '''
+    Description: ROS 2 node that owns the arm state, accepts target
+                 positions, plans trajectories, and publishes joint state
+                 feedback.
+    '''
+
     def __init__(self):
-        super().__init__("controller_node")
+        super().__init__('controller_node')
 
         # Initialize kinematics
         self.arm = PlanarArm(LINK_LENGTHS)
@@ -58,7 +85,7 @@ class ControllerNode(Node):
             control_mode = "position"
         self.control_mode = control_mode
 
-        # Arm State
+        ##################### ARM STATE #######################
         self.current_q = [0.0, 0.0, 0.0]   # commanded (planner) state
         self.current_qdot = [0.0, 0.0, 0.0]  # commanded joint velocities (rad/s)
         self.measured_q = [0.0, 0.0, 0.0]  # reported (plant) state -- see simulate_plant()
@@ -66,14 +93,14 @@ class ControllerNode(Node):
         self.start_q = [0.0, 0.0, 0.0]
         self.target_q = [0.0, 0.0, 0.0]
 
-        # Trajectory state
+        ##################### TRAJECTORY STATE #######################
         self.is_moving = False
         self.move_start_time = 0.0
         self._target_seq = 0          # increasing id for correlating log lines per target
         self._active_target = (0, (0.0, 0.0))  # (seq, xy) for the move currently in flight
         self._traj = {"kind": "position"}  # plan for the move currently in flight (see target_callback)
 
-        # ROS 2 Interfaces
+        ##################### ROS 2 INTERFACES #######################
         # NOTE on the command/state seam: `/joint_command` is what the planner
         # WANTS the joints to do at each tick. `/joint_states` is what the
         # arm actually reports. In this simulation the "plant" is trivial
@@ -92,7 +119,7 @@ class ControllerNode(Node):
         # starting value before the first target arrives.
         self.goal_pub.publish(Bool(data=True))
 
-        # Control Loop Timer[cite: 2]
+        ##################### CONTROL LOOP #######################
         timer_period = 1.0 / self.publish_rate
         self.timer = self.create_timer(timer_period, self.control_loop)
 
@@ -312,7 +339,13 @@ class ControllerNode(Node):
         self.state_pub.publish(msg)
 
 
+##################### FUNCTION DEFINITION #######################
+
 def main(args=None):
+    '''
+    Description: Initializes ROS 2, creates the controller node, and spins
+                 until shutdown.
+    '''
     rclpy.init(args=args)
     node = ControllerNode()
     try:
