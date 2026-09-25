@@ -12,7 +12,6 @@ Features:
 """
 
 import sys
-import math
 import time
 import signal
 
@@ -20,6 +19,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from geometry_msgs.msg import Point
+from std_msgs.msg import String, Bool
 
 from PyQt5 import QtWidgets, QtCore
 import pyqtgraph as pg
@@ -50,10 +50,24 @@ class GuiNode(Node):
             10
         )
         self.target_pub = self.create_publisher(Point, '/target_pose', 10)
+        self.status_sub = self.create_subscription(
+            String, '/target_status', self.status_callback, 10
+        )
+        self.goal_sub = self.create_subscription(
+            Bool, '/at_goal', self.goal_callback, 10
+        )
 
         # State Data for GUI
         self.current_q = [0.0, 0.0, 0.0]
         self.current_ee = (0.0, 0.0)
+        self.last_status = "No target sent yet."
+        self.last_status_is_warning = False
+        self.at_goal = True
+
+        # Simple callback hooks the MainWindow can attach to for
+        # feedback-driven sequencing (set by MainWindow after construction).
+        self.on_status = None
+        self.on_goal_reached = None
 
         # Time-series data buffers for plotting
         self.start_time = time.time()
@@ -79,6 +93,28 @@ class GuiNode(Node):
                 for i in range(3):
                     self.q_data[i].pop(0)
 
+    def status_callback(self, msg: String):
+        """Handles /target_status -- surfaces reachability info from the controller."""
+        text = msg.data
+        self.last_status_is_warning = text.startswith("CLAMPED") or text.startswith("REJECTED") or text.startswith("IK_ERROR")
+        if text.startswith("CLAMPED"):
+            detail = text.split(" ", 1)[1] if " " in text else text
+            self.last_status = "Target outside workspace -- clamped to boundary. " + detail
+        elif text.startswith("REJECTED"):
+            self.last_status = "Target rejected: solution violated joint limits / ground constraint."
+        elif text.startswith("IK_ERROR"):
+            self.last_status = f"IK error: {text}"
+        else:
+            self.last_status = "Target reachable, moving. " + text
+        if self.on_status:
+            self.on_status(self.last_status, self.last_status_is_warning)
+
+    def goal_callback(self, msg: Bool):
+        """Handles /at_goal -- lets the GUI know when a move has actually finished."""
+        self.at_goal = msg.data
+        if msg.data and self.on_goal_reached:
+            self.on_goal_reached()
+
     def send_target(self, x, y):
         """Publishes the requested (x, y) target to the controller."""
         msg = Point()
@@ -96,7 +132,7 @@ class MainWindow(QtWidgets.QWidget):
         super().__init__()
         self.node = ros_node
         self.setWindowTitle("3-DOF Planar Arm Control Panel")
-        self.resize(1000, 600)
+        self.resize(1920, 1080)
 
         self.init_ui()
 
@@ -171,6 +207,26 @@ class MainWindow(QtWidgets.QWidget):
 
         layout.addLayout(control_layout)
 
+        # ---- STATUS BAR (surfaces /target_status, e.g. unreachable targets) ----
+        self.status_label = QtWidgets.QLabel("No target sent yet.")
+        self.status_label.setStyleSheet("font-size: 12px; padding: 4px;")
+        layout.addWidget(self.status_label)
+
+        # Wire the ROS node's callbacks to this window so status/goal
+        # updates reach the GUI as soon as they're received, not just on
+        # the next spin_and_update tick.
+        self.node.on_status = self.on_target_status
+        self.node.on_goal_reached = self.on_goal_reached
+
+    def on_target_status(self, text, is_warning):
+        color = "#b30000" if is_warning else "#1a7a1a"
+        self.status_label.setStyleSheet(f"font-size: 12px; padding: 4px; color: {color}; font-weight: bold;")
+        self.status_label.setText(text)
+
+    def on_goal_reached(self):
+        # Hook for feedback-driven sequencing; see run_pick_and_place().
+        pass
+
     def spin_and_update(self):
         """Fired by QTimer: Spins ROS and updates the GUI."""
         # 1. Spin ROS 2 to process incoming /joint_states callbacks
@@ -181,23 +237,21 @@ class MainWindow(QtWidgets.QWidget):
 
         rclpy.spin_once(self.node, timeout_sec=0.0)
 
-        # 2. Compute Forward Kinematics for plotting
+        # 2. Forward kinematics for plotting -- reuse the PROVIDED library
+        #    (arm.forward_kinematics) instead of re-deriving the trig by
+        #    hand, so the visualization can never drift from the arm's own
+        #    definition of its geometry.
         q1, q2, q3 = self.node.current_q
-        L1, L2, L3 = LINK_LENGTHS
-
-        x0, y0 = 0.0, 0.0
-        x1 = L1 * math.cos(q1)
-        y1 = L1 * math.sin(q1)
-        x2 = x1 + L2 * math.cos(q1 + q2)
-        y2 = y1 + L2 * math.sin(q1 + q2)
-        x3 = x2 + L3 * math.cos(q1 + q2 + q3)
-        y3 = y2 + L3 * math.sin(q1 + q2 + q3)
+        points = self.node.arm.forward_kinematics([q1, q2, q3])
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        x3, y3 = points[-1]
 
         self.node.current_ee = (x3, y3)
 
         # 3. Update Plots
         # Arm visualizer
-        self.arm_line.setData([x0, x1, x2, x3], [y0, y1, y2, y3])
+        self.arm_line.setData(xs, ys)
 
         # Joint time-series
         if len(self.node.time_data) > 0:
@@ -221,37 +275,57 @@ class MainWindow(QtWidgets.QWidget):
             self.node.get_logger().error("Invalid Target Input. Please enter floats.")
 
     def run_pick_and_place(self):
-        """Orchestrates the move -> pick -> move -> place sequence."""
+        """Orchestrates the move -> pick -> move -> place sequence.
+
+        Driven by the controller's /at_goal feedback rather than a guessed
+        QTimer delay, so the sequence stays correct even if
+        `trajectory_duration` changes, and won't fire the next step early
+        (or too late) if a move takes longer than expected.
+        """
         self.node.get_logger().info("Starting Pick-and-Place Sequence...")
         self.seq_btn.setEnabled(False)
 
-        # Define the fixed test scenario
         pick_target = (4.0, 2.0)
         place_target = (-3.0, 3.0)
+        action_time_ms = 1000  # simulated gripper actuation, not arm motion
 
-        # Timing (depends on your trajectory_duration parameter, assuming 2.0s)
-        move_time = 2500  # ms
-        action_time = 1000  # ms (simulated gripper action)
+        # A tiny state machine over the goal-reached callback. Each step
+        # waits for one /at_goal=True event before advancing.
+        state = {"step": 0}
 
-        # Step 1: Move to Pick
-        self.node.send_target(*pick_target)
+        def advance():
+            step = state["step"]
+            if step == 0:
+                self.node.get_logger().info(f"Moving to pick target {pick_target}...")
+                self.node.send_target(*pick_target)
+            elif step == 1:
+                self.node.get_logger().info("At pick target. Closing gripper (Pick)...")
+                QtCore.QTimer.singleShot(action_time_ms, advance)
+                state["step"] += 1
+                return
+            elif step == 2:
+                self.node.get_logger().info(f"Moving to place target {place_target}...")
+                self.node.send_target(*place_target)
+            elif step == 3:
+                self.node.get_logger().info("At place target. Opening gripper (Place)...")
+                QtCore.QTimer.singleShot(action_time_ms, advance)
+                state["step"] += 1
+                return
+            elif step == 4:
+                self.node.get_logger().info("Sequence complete.")
+                self.node.on_goal_reached = self.on_goal_reached  # detach sequence hook
+                self.seq_btn.setEnabled(True)
+                return
+            state["step"] += 1
 
-        # Step 2: "Pick" (Simulated delay, then move to Place)
-        QtCore.QTimer.singleShot(
-            move_time, lambda: self.node.get_logger().info("Closing gripper (Pick)..."))
+        def on_goal_during_sequence():
+            # Only steps 0 and 2 are real arm moves that end in an /at_goal
+            # event; steps 1/3 are timed gripper actions handled above.
+            if state["step"] in (1, 3):
+                advance()
 
-        # Step 3: Move to Place
-        QtCore.QTimer.singleShot(
-            move_time + action_time,
-            lambda: self.node.send_target(
-                *place_target))
-
-        # Step 4: "Place" & Reset Button
-        def finish_sequence():
-            self.node.get_logger().info("Opening gripper (Place). Sequence Complete.")
-            self.seq_btn.setEnabled(True)
-
-        QtCore.QTimer.singleShot((move_time * 2) + action_time, finish_sequence)
+        self.node.on_goal_reached = on_goal_during_sequence
+        advance()
 
 
 def main(args=None):

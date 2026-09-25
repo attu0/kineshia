@@ -1,89 +1,74 @@
-# Kineshia Robotics — ROS 2 Manipulator Take-Home (Starter Repo)
+# planar_arm_control
 
-Welcome, and thanks for taking the time. This repo is your starting point for
-the **Robotics Software Engineer (ROS 2 & GUI Systems)** take-home task. The
-full brief (what to build, how you're evaluated, how to submit) is in the
-separate task document you were sent. This README covers setup only.
+ROS 2 (Jazzy/Humble) control + PyQt5/PyQtGraph telemetry GUI for a 3-DoF
+planar manipulator. Take-home submission for Kineshia Robotics.
 
----
-
-## What's in here
-
-```
-kineshia_ros2_arm_task/
-├── README.md                         <- you are here (setup only)
-└── src/
-    └── planar_arm_control/           <- an ament_python package to build on
-        ├── package.xml
-        ├── setup.py
-        ├── setup.cfg
-        ├── resource/planar_arm_control
-        ├── launch/
-        │   └── bringup.launch.py      <- STUB: launch controller + GUI
-        └── planar_arm_control/
-            ├── planar_arm.py          <- PROVIDED kinematics. DO NOT MODIFY.
-            ├── controller_node.py     <- STUB: your controller
-            └── gui_node.py            <- STUB: your PyQt5/PyQtGraph GUI
-```
-
-**`planar_arm.py` is given to you fully working** — forward kinematics,
-multiple-solution analytical inverse kinematics (with a damped-Jacobian
-fallback), joint limits, and a ground constraint. Treat it as a black-box
-library and build around it. Please don't modify it; if you think it has a
-bug, note it in your write-up instead.
-
-The three other files are **stubs** with `TODO`s describing the interface we
-suggest. You implement them.
-
----
-
-## The arm
-
-A 3-DoF planar (2D) revolute arm.
-
-| Property        | Value                                  |
-|-----------------|----------------------------------------|
-| Link lengths    | `[3.0, 2.0, 1.5]`                      |
-| Joint 1 limits  | `0°` to `180°`                         |
-| Joint 2 limits  | `-120°` to `120°`                      |
-| Joint 3 limits  | `-120°` to `120°`                      |
-| Constraint      | no part of the arm may go below `y = 0`|
-
-Quick sanity check of the provided library:
+## Build
 
 ```bash
-python3 src/planar_arm_control/planar_arm_control/planar_arm.py
-```
-
----
-
-## Environment
-
-- **ROS 2 Jazzy** (preferred) or **Humble** on **Ubuntu**.
-- Python 3, `numpy`.
-- GUI dependencies: `PyQt5` and `pyqtgraph`
-  ```bash
-  pip install PyQt5 pyqtgraph        # or: sudo apt install python3-pyqt5 python3-pyqtgraph
-  ```
-
-## Build & run
-
-```bash
-# from the repo root (this is your colcon workspace root)
-colcon build
+# from your workspace root, e.g. ~/ros2_ws
+cp -r planar_arm_control src/
+pip install PyQt5 pyqtgraph --user   # not available via rosdep on all distros
+colcon build --packages-select planar_arm_control
 source install/setup.bash
+```
 
-# once you've implemented the nodes:
+## Run
+
+```bash
 ros2 launch planar_arm_control bringup.launch.py
 ```
 
----
+This brings up `controller_node` and `gui_node` together. Launch arguments:
 
-## What to do next
+- `publish_rate_hz` (default `50.0`) — rate of `/joint_states`.
+- `control_mode` (default `position`) — reserved for future control modes
+  (see "What I'd do next").
 
-Open the **task brief** for the full requirements, the core vs. stretch split,
-the deliverables (repo + design note + short demo recording), and the timeline.
-If anything is unclear, email **hr@kineshia.in** — reasonable questions are
-welcome and won't count against you.
+From the GUI: enter a target X/Y and click **Send Target**, or click
+**Run Test Sequence** to run the fixed pick-and-place scenario below.
 
-Good luck — we're excited to see how you architect it.
+## Test scenario (as specified in the brief)
+
+- Pick at `(4.0, 2.0)`, place at `(-3.0, 3.0)` — run via the **Run Test
+  Sequence** button.
+- Edge case: `(7.0, 3.0)` is outside the workspace (max reach = 6.5). Type
+  it into the Target X/Y fields and click **Send Target** — the status bar
+  at the bottom of the GUI turns red and reports the requested target
+  alongside the clamped point actually used.
+
+## What I built
+
+- **`controller_node`** — owns arm state, subscribes to `/target_pose`,
+  runs the provided `PlanarArm.inverse_kinematics`, and streams a quintic
+  (zero velocity/acceleration at both ends) joint-space trajectory on
+  `/joint_states` at a fixed rate.
+- **`gui_node`** — PyQt5/PyQtGraph client: live arm visualization, joint
+  angle vs. time plot, EE telemetry, target input, and the pick-and-place
+  sequence button. Runs `rclpy.spin_once(timeout_sec=0.0)` from a `QTimer`
+  so the Qt event loop and the ROS 2 side share one thread without either
+  blocking the other.
+- **`/target_status`** (`std_msgs/String`) and **`/at_goal`**
+  (`std_msgs/Bool`) — added on top of the suggested interface so the
+  controller can tell the GUI *why* the arm is doing something (target
+  reachable / clamped / rejected) and *when* a move has actually finished,
+  rather than the GUI guessing off a timer.
+- **`/joint_command`** vs **`/joint_states`** — kept as separate topics on
+  purpose. See the design note for why.
+
+## Known limitations / what I'd do next with more time
+
+- Only position/trajectory control is implemented; `control_mode` is
+  declared but not yet branched on. Next: a velocity mode and a PID
+  tracking loop with a live error plot (see design note, stretch goals).
+- The Jacobian IK fallback (`jacobian_ik` in the provided library) doesn't
+  itself check joint limits or the ground constraint. I added a check in
+  `controller_node` that rejects any solution — analytical or
+  fallback — that fails those constraints, and reports it on
+  `/target_status`, rather than modifying `planar_arm.py`.
+- No automated tests yet (`launch_testing` / `pytest`) — would add
+  coverage for the reachability-clamp status logic and the
+  constraint-rejection path first, since those are the two behaviors this
+  submission adds beyond the stub.
+- Single fixed test scenario is hardcoded in the GUI's sequence button;
+  a real operator UI would let you queue arbitrary pick/place pairs.
