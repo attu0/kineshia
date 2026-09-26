@@ -329,6 +329,10 @@ class MainWindow(QtWidgets.QWidget):
     ##################### RECORD AND PLAYBACK #######################
 
     def toggle_record(self, checked):
+        if checked and self.is_looping:
+            self.node.get_logger().warn("[RECORD] cannot start recording while a sequence is playing back")
+            self.record_btn.setChecked(False)
+            return
         self.is_recording = checked
         self.record_btn.setText("Stop Recording" if checked else "Start Recording")
         if checked:
@@ -369,6 +373,13 @@ class MainWindow(QtWidgets.QWidget):
             self.close_gripper()
 
     def toggle_loop(self, checked):
+        if checked and not self.seq_btn.isEnabled():
+            # The pick-and-place test sequence is mid-run and already owns
+            # on_goal_reached -- refuse rather than silently stealing it.
+            self.node.get_logger().warn("[PLAYBACK] cannot start playback while the test sequence is running")
+            self.loop_btn.setChecked(False)
+            return
+
         self.is_looping = checked
         self.loop_btn.setText("Stop Sequence" if checked else "Play Sequence")
 
@@ -385,12 +396,17 @@ class MainWindow(QtWidgets.QWidget):
             self.node.on_goal_reached = self.advance_playback
             self.node.get_logger().info(f"[PLAYBACK] Starting sequence for {self.remaining_loops} loop(s)...")
 
-            # Disable input so user doesn't change loop count mid-run
+            # Disable input/other sequence controls so nothing else can
+            # steal on_goal_reached or mutate recorded_sequence mid-playback.
             self.loop_count_input.setEnabled(False)
+            self.seq_btn.setEnabled(False)
+            self.record_btn.setEnabled(False)
             self.advance_playback()
         else:
             self.node.get_logger().info("[PLAYBACK] Sequence stopped early.")
             self.loop_count_input.setEnabled(True)
+            self.seq_btn.setEnabled(True)
+            self.record_btn.setEnabled(True)
             self.node.on_goal_reached = self.on_goal_reached
 
     def advance_playback(self):
@@ -406,6 +422,8 @@ class MainWindow(QtWidgets.QWidget):
                 self.loop_btn.setChecked(False)
                 self.loop_btn.setText("Play Sequence")
                 self.loop_count_input.setEnabled(True)
+                self.seq_btn.setEnabled(True)
+                self.record_btn.setEnabled(True)
                 self.node.get_logger().info("[PLAYBACK] Sequence finished all loops.")
                 self.node.on_goal_reached = self.on_goal_reached
                 return
@@ -436,8 +454,15 @@ class MainWindow(QtWidgets.QWidget):
     ##################### TEST SCENARIO #######################
 
     def run_pick_and_place(self):
+        if self.is_looping or self.is_recording:
+            self.node.get_logger().warn(
+                "[SEQUENCE] cannot start test sequence while recording or playback is active"
+            )
+            return
         self.node.get_logger().info("[SEQUENCE] starting pick-and-place test scenario")
         self.seq_btn.setEnabled(False)
+        self.loop_btn.setEnabled(False)
+        self.record_btn.setEnabled(False)
 
         pick_target = (4.0, 2.0)
         place_target = (-3.0, 3.0)
@@ -469,6 +494,8 @@ class MainWindow(QtWidgets.QWidget):
                 self.node.get_logger().info("[SEQUENCE] complete")
                 self.node.on_goal_reached = self.on_goal_reached
                 self.seq_btn.setEnabled(True)
+                self.loop_btn.setEnabled(True)
+                self.record_btn.setEnabled(True)
                 return
             state["step"] += 1
 
